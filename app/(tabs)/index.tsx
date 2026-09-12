@@ -87,7 +87,7 @@ export default function HomeScreen() {
     if (picked.canceled || !picked.assets[0]?.base64) return;
     setAnalyzingImage(true); setImageResult(null);
     try { const asset = picked.assets[0]; const result = await analyzeImage(asset.base64!, asset.mimeType ?? "image/jpeg"); setImageResult(result.analysis); }
-    catch (error) { Alert.alert("تعذر تحليل الصورة", String(error)); }
+    catch (error) { Alert.alert("تحليل الصورة يحتاج اتصالًا", String(error)); }
     finally { setAnalyzingImage(false); }
   };
 

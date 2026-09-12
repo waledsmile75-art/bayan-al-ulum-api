@@ -6,8 +6,16 @@ export type CoreSnapshot = { projects: number; documents: number; pages: number;
 export type CoreAnswer = { status: string; answer: string; confidenceScore: number; confidenceReasons: string[]; evidence: Array<{ evidenceId: number; pageNumber: number; text: string; sourceName: string; finalScore: number; keywordScore: number; semanticScore: number }> };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${base}${path}`, { headers: { "Content-Type": "application/json" }, ...init });
-  const body = await response.json();
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}`, { headers: { "Content-Type": "application/json" }, ...init });
+  } catch {
+    throw new Error("الخادم غير متاح حاليًا. تم الاحتفاظ بالبيانات محليًا.");
+  }
+  const raw = await response.text();
+  let body: any;
+  try { body = JSON.parse(raw); }
+  catch { throw new Error(response.ok ? "استجابة غير مفهومة من الخادم." : "الخادم غير متاح حاليًا. أعد المحاولة عند عودة الاتصال."); }
   if (!response.ok || body.ok === false) throw new Error(body.error || "CORE_REQUEST_FAILED");
   return body;
 }
