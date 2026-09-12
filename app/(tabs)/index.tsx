@@ -4,7 +4,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { ScreenContainer } from "@/components/screen-container";
-import { analyzeImage, askCore, getCoreSnapshot, ingestPdf, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
+import { analyzeImage, askCore, getCoreSnapshot, ingestPdf, getConfiguredApiBaseUrl, setConfiguredApiBaseUrl, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
 import { enqueueDocument, getCachedAnswer, getLocalCounts, initLocalStore, listLocalDocuments, markDocumentResult, saveCachedAnswer, type LocalDocument } from "@/lib/local-db";
 import { syncPendingDocuments } from "@/lib/sync-queue";
 import { useColors } from "@/hooks/use-colors";
@@ -30,6 +30,9 @@ export default function HomeScreen() {
   const [localDocuments, setLocalDocuments] = useState<LocalDocument[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [offline, setOffline] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [apiUrl, setApiUrl] = useState("");
 
   const refresh = useCallback(async () => {
     const local = await getLocalCounts();
@@ -51,8 +54,12 @@ export default function HomeScreen() {
     setUploading(true);
     try {
       const file = picked.assets[0];
-      const localItem = await enqueueDocument(file.name, file.uri);
-      const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
+      const permanentDir = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}bayan-documents/` : null;
+      if (permanentDir) await FileSystem.makeDirectoryAsync(permanentDir, { intermediates: true }).catch(() => undefined);
+      const permanentUri = permanentDir ? `${permanentDir}${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}` : file.uri;
+      if (permanentDir) await FileSystem.copyAsync({ from: file.uri, to: permanentUri });
+      const localItem = await enqueueDocument(file.name, permanentUri);
+      const base64 = await FileSystem.readAsStringAsync(permanentUri, { encoding: FileSystem.EncodingType.Base64 });
       try {
         const result = await ingestPdf(file.name, base64);
         await markDocumentResult(localItem.id, true);
@@ -65,6 +72,10 @@ export default function HomeScreen() {
     } catch (error) { Alert.alert("تعذر معالجة الملف", String(error)); }
     finally { setUploading(false); }
   };
+
+  const handleManualSync = async () => { setSyncing(true); await syncPendingDocuments(); await refresh(); setSyncing(false); };
+  const openSettings = async () => { setApiUrl(await getConfiguredApiBaseUrl()); setSettingsOpen((value) => !value); };
+  const saveSettings = async () => { await setConfiguredApiBaseUrl(apiUrl); setSettingsOpen(false); await refresh(); };
 
   const handleAsk = async () => {
     if (!question.trim()) return;
@@ -108,6 +119,8 @@ export default function HomeScreen() {
           <Text style={styles.heroText}>يعمل النظام على ملفاتك المفهرسة فقط، ويفصل بوضوح بين النص المصدر والاستنتاج التحليلي.</Text>
         </View>
         <View style={[styles.connection, { backgroundColor: offline ? colors.warning : colors.success }]}><Text style={styles.connectionText}>{offline ? `وضع عدم الاتصال · ${pendingCount} ملف بانتظار المزامنة` : "متصل · المزامنة التلقائية مفعّلة"}</Text></View>
+        <View style={styles.actionRow}><Pressable onPress={handleManualSync} style={[styles.smallButton, { backgroundColor: colors.primary }]}><Text style={styles.smallButtonText}>{syncing ? "جارٍ المزامنة…" : "مزامنة الآن"}</Text></Pressable><Pressable onPress={openSettings} style={[styles.smallButton, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 }]}><Text style={[styles.smallButtonText, { color: colors.foreground }]}>إعدادات الاتصال</Text></Pressable></View>
+        {settingsOpen && <View style={[styles.settingsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}><Text style={[styles.evidenceHeading, { color: colors.foreground }]}>عنوان خادم API</Text><TextInput value={apiUrl} onChangeText={setApiUrl} autoCapitalize="none" keyboardType="url" placeholder="https://your-api.example.com" placeholderTextColor={colors.muted} style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]} /><Pressable onPress={saveSettings} style={[styles.askButton, { backgroundColor: colors.primary }]}><Text style={styles.askText}>حفظ واختبار الاتصال</Text></Pressable></View>}
 
         <View style={styles.statsRow}>
           {[{ label: "مستندات", value: snapshot?.documents ?? "—" }, { label: "Chunks", value: snapshot?.chunks ?? "—" }, { label: "Embeddings", value: snapshot?.embeddings ?? "—" }].map((item) => <View key={item.label} style={[styles.stat, { backgroundColor: colors.surface, borderColor: colors.border }]}><Text style={[styles.statValue, { color: colors.foreground }]}>{item.value}</Text><Text style={[styles.statLabel, { color: colors.muted }]}>{item.label}</Text></View>)}
@@ -134,5 +147,5 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({ content: { paddingBottom: 40, gap: 16 }, header: { gap: 8 }, brandRow: { flexDirection: "row-reverse", alignItems: "center", gap: 12 }, logo: { width: 54, height: 54, borderRadius: 16 }, kicker: { fontSize: 12, fontWeight: "700", letterSpacing: 1, textAlign: "right" }, title: { fontSize: 30, fontWeight: "800", textAlign: "right" }, subtitle: { fontSize: 15, lineHeight: 24, textAlign: "right" }, hero: { borderRadius: 24, padding: 22, gap: 8 }, heroEyebrow: { color: "#CFEFEF", fontSize: 11, fontWeight: "800", letterSpacing: 1, textAlign: "right" }, heroTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "800", lineHeight: 32, textAlign: "right" }, heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, connection: { borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 }, connectionText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800", textAlign: "right" }, statsRow: { flexDirection: "row", gap: 10 }, stat: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, alignItems: "center", gap: 4 }, statValue: { fontSize: 22, fontWeight: "800" }, statLabel: { fontSize: 11 }, card: { borderRadius: 20, borderWidth: 1, padding: 17, gap: 12 }, sectionHeader: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { fontSize: 18, fontWeight: "800", textAlign: "right" }, sectionHint: { fontSize: 11, fontWeight: "700" }, cardText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, uploadButton: { borderWidth: 1.5, borderStyle: "dashed", borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageButton: { borderWidth: 1, borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageResult: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }, localList: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 6 }, localItem: { fontSize: 12, textAlign: "right" }, uploadIcon: { fontSize: 28, fontWeight: "300" }, uploadTitle: { fontSize: 15, fontWeight: "700", textAlign: "right" }, uploadMeta: { fontSize: 11, marginTop: 3, textAlign: "right" }, input: { minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 13, fontSize: 15, lineHeight: 23 }, askButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" }, askText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, answerCard: { borderRadius: 20, borderWidth: 1.5, padding: 17, gap: 11 }, badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }, badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" }, answerText: { fontSize: 17, fontWeight: "700", lineHeight: 27, textAlign: "right" }, confidence: { fontSize: 12, textAlign: "right" }, evidenceHeading: { fontSize: 15, fontWeight: "800", textAlign: "right", marginTop: 5 }, evidence: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 }, evidenceMeta: { fontSize: 11, fontWeight: "800", textAlign: "right" }, evidenceText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, score: { fontSize: 10, textAlign: "right" },
+const styles = StyleSheet.create({ content: { paddingBottom: 40, gap: 16 }, actionRow: { flexDirection: "row-reverse", gap: 8 }, smallButton: { flex: 1, borderRadius: 12, paddingVertical: 11, alignItems: "center" }, smallButtonText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800" }, settingsCard: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 }, header: { gap: 8 }, brandRow: { flexDirection: "row-reverse", alignItems: "center", gap: 12 }, logo: { width: 54, height: 54, borderRadius: 16 }, kicker: { fontSize: 12, fontWeight: "700", letterSpacing: 1, textAlign: "right" }, title: { fontSize: 30, fontWeight: "800", textAlign: "right" }, subtitle: { fontSize: 15, lineHeight: 24, textAlign: "right" }, hero: { borderRadius: 24, padding: 22, gap: 8 }, heroEyebrow: { color: "#CFEFEF", fontSize: 11, fontWeight: "800", letterSpacing: 1, textAlign: "right" }, heroTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "800", lineHeight: 32, textAlign: "right" }, heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, connection: { borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 }, connectionText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800", textAlign: "right" }, statsRow: { flexDirection: "row", gap: 10 }, stat: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, alignItems: "center", gap: 4 }, statValue: { fontSize: 22, fontWeight: "800" }, statLabel: { fontSize: 11 }, card: { borderRadius: 20, borderWidth: 1, padding: 17, gap: 12 }, sectionHeader: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { fontSize: 18, fontWeight: "800", textAlign: "right" }, sectionHint: { fontSize: 11, fontWeight: "700" }, cardText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, uploadButton: { borderWidth: 1.5, borderStyle: "dashed", borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageButton: { borderWidth: 1, borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageResult: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }, localList: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 6 }, localItem: { fontSize: 12, textAlign: "right" }, uploadIcon: { fontSize: 28, fontWeight: "300" }, uploadTitle: { fontSize: 15, fontWeight: "700", textAlign: "right" }, uploadMeta: { fontSize: 11, marginTop: 3, textAlign: "right" }, input: { minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 13, fontSize: 15, lineHeight: 23 }, askButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" }, askText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, answerCard: { borderRadius: 20, borderWidth: 1.5, padding: 17, gap: 11 }, badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }, badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" }, answerText: { fontSize: 17, fontWeight: "700", lineHeight: 27, textAlign: "right" }, confidence: { fontSize: 12, textAlign: "right" }, evidenceHeading: { fontSize: 15, fontWeight: "800", textAlign: "right", marginTop: 5 }, evidence: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 }, evidenceMeta: { fontSize: 11, fontWeight: "800", textAlign: "right" }, evidenceText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, score: { fontSize: 10, textAlign: "right" },
 });

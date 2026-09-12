@@ -1,6 +1,10 @@
 import { getApiBaseUrl } from "@/constants/oauth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const base = getApiBaseUrl();
+const API_OVERRIDE_KEY = "bayan_api_override";
+
+export async function getConfiguredApiBaseUrl() { return (await AsyncStorage.getItem(API_OVERRIDE_KEY)) || getApiBaseUrl(); }
+export async function setConfiguredApiBaseUrl(value: string) { const normalized = value.trim().replace(/\/$/, ""); if (normalized) await AsyncStorage.setItem(API_OVERRIDE_KEY, normalized); else await AsyncStorage.removeItem(API_OVERRIDE_KEY); }
 
 export type CoreSnapshot = { projects: number; documents: number; pages: number; chunks: number; embeddings: number; claims: number; evidence: number };
 export type CoreAnswer = { status: string; answer: string; confidenceScore: number; confidenceReasons: string[]; evidence: Array<{ evidenceId: number; pageNumber: number; text: string; sourceName: string; finalScore: number; keywordScore: number; semanticScore: number }> };
@@ -8,7 +12,7 @@ export type CoreAnswer = { status: string; answer: string; confidenceScore: numb
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${base}${path}`, { headers: { "Content-Type": "application/json" }, ...init });
+    response = await fetch(`${await getConfiguredApiBaseUrl()}${path}`, { headers: { "Content-Type": "application/json" }, ...init });
   } catch {
     throw new Error("الخادم غير متاح حاليًا. تم الاحتفاظ بالبيانات محليًا.");
   }
