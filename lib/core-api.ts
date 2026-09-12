@@ -15,3 +15,4 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function getCoreSnapshot() { return (await request<{ snapshot: CoreSnapshot }>("/api/core/snapshot")).snapshot; }
 export async function askCore(question: string) { return (await request<{ result: CoreAnswer }>("/api/core/ask", { method: "POST", body: JSON.stringify({ question }) })).result; }
 export async function ingestPdf(filename: string, dataBase64: string) { return (await request<{ result: { documentId: number; pageCount: number; chunkCount: number } }>("/api/core/ingest", { method: "POST", body: JSON.stringify({ filename, dataBase64 }) })).result; }
+export async function analyzeImage(imageBase64: string, mimeType = "image/jpeg", prompt?: string) { return (await request<{ result: { analysis: string; model: string } }>("/api/core/analyze-image", { method: "POST", body: JSON.stringify({ imageBase64, mimeType, prompt }) })).result; }

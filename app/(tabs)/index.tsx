@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { ScreenContainer } from "@/components/screen-container";
-import { askCore, getCoreSnapshot, ingestPdf, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
+import { analyzeImage, askCore, getCoreSnapshot, ingestPdf, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
 import { useColors } from "@/hooks/use-colors";
 
 const statusLabel: Record<string, string> = {
@@ -22,6 +23,8 @@ export default function HomeScreen() {
   const [snapshot, setSnapshot] = useState<CoreSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [analyzingImage, setAnalyzingImage] = useState(false);
+  const [imageResult, setImageResult] = useState<string | null>(null);
 
   const refresh = useCallback(async () => { try { setSnapshot(await getCoreSnapshot()); } catch { setSnapshot(null); } }, []);
   useEffect(() => { refresh(); }, [refresh]);
@@ -46,6 +49,15 @@ export default function HomeScreen() {
     try { setAnswer(await askCore(question)); await refresh(); }
     catch (error) { Alert.alert("تعذر تنفيذ السؤال", String(error)); }
     finally { setBusy(false); }
+  };
+
+  const handleImageAnalysis = async () => {
+    const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: false, quality: 0.85, base64: true });
+    if (picked.canceled || !picked.assets[0]?.base64) return;
+    setAnalyzingImage(true); setImageResult(null);
+    try { const asset = picked.assets[0]; const result = await analyzeImage(asset.base64!, asset.mimeType ?? "image/jpeg"); setImageResult(result.analysis); }
+    catch (error) { Alert.alert("تعذر تحليل الصورة", String(error)); }
+    finally { setAnalyzingImage(false); }
   };
 
   return (
@@ -73,6 +85,8 @@ export default function HomeScreen() {
           <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.foreground }]}>مصادرك العلمية</Text><Text style={[styles.sectionHint, { color: colors.success }]}>SQLite + RAG</Text></View>
           <Text style={[styles.cardText, { color: colors.muted }]}>ارفع ملف PDF نصيًا ليتم استخراج صفحاته وتقطيعها وفهرستها دلاليًا.</Text>
           <Pressable onPress={handleUpload} disabled={uploading} style={({ pressed }) => [styles.uploadButton, { borderColor: colors.primary }, pressed && styles.pressed]}><Text style={[styles.uploadIcon, { color: colors.primary }]}>＋</Text><View><Text style={[styles.uploadTitle, { color: colors.foreground }]}>{uploading ? "جارٍ استخراج وفهرسة الملف…" : "إضافة ملف PDF"}</Text><Text style={[styles.uploadMeta, { color: colors.muted }]}>صفحات ← Chunks ← Embeddings</Text></View>{uploading && <ActivityIndicator color={colors.primary} />}</Pressable>
+          <Pressable onPress={handleImageAnalysis} disabled={analyzingImage} style={({ pressed }) => [styles.imageButton, { backgroundColor: colors.background, borderColor: colors.border }, pressed && styles.pressed]}><Text style={[styles.uploadIcon, { color: colors.primary }]}>▧</Text><View><Text style={[styles.uploadTitle, { color: colors.foreground }]}>{analyzingImage ? "جارٍ تحليل الصورة…" : "رفع صورة وتحليلها"}</Text><Text style={[styles.uploadMeta, { color: colors.muted }]}>استخراج النصوص والأرقام ووصف المحتوى</Text></View>{analyzingImage && <ActivityIndicator color={colors.primary} />}</Pressable>
+          {imageResult && <View style={[styles.imageResult, { backgroundColor: colors.background, borderColor: colors.primary }]}><Text style={[styles.evidenceHeading, { color: colors.foreground }]}>نتيجة تحليل الصورة</Text><Text style={[styles.answerText, { color: colors.foreground }]}>{imageResult}</Text></View>}
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -87,5 +101,5 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({ content: { paddingBottom: 40, gap: 16 }, header: { gap: 8 }, brandRow: { flexDirection: "row-reverse", alignItems: "center", gap: 12 }, logo: { width: 54, height: 54, borderRadius: 16 }, kicker: { fontSize: 12, fontWeight: "700", letterSpacing: 1, textAlign: "right" }, title: { fontSize: 30, fontWeight: "800", textAlign: "right" }, subtitle: { fontSize: 15, lineHeight: 24, textAlign: "right" }, hero: { borderRadius: 24, padding: 22, gap: 8 }, heroEyebrow: { color: "#CFEFEF", fontSize: 11, fontWeight: "800", letterSpacing: 1, textAlign: "right" }, heroTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "800", lineHeight: 32, textAlign: "right" }, heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, statsRow: { flexDirection: "row", gap: 10 }, stat: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, alignItems: "center", gap: 4 }, statValue: { fontSize: 22, fontWeight: "800" }, statLabel: { fontSize: 11 }, card: { borderRadius: 20, borderWidth: 1, padding: 17, gap: 12 }, sectionHeader: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { fontSize: 18, fontWeight: "800", textAlign: "right" }, sectionHint: { fontSize: 11, fontWeight: "700" }, cardText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, uploadButton: { borderWidth: 1.5, borderStyle: "dashed", borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, uploadIcon: { fontSize: 28, fontWeight: "300" }, uploadTitle: { fontSize: 15, fontWeight: "700", textAlign: "right" }, uploadMeta: { fontSize: 11, marginTop: 3, textAlign: "right" }, input: { minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 13, fontSize: 15, lineHeight: 23 }, askButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" }, askText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, answerCard: { borderRadius: 20, borderWidth: 1.5, padding: 17, gap: 11 }, badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }, badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" }, answerText: { fontSize: 17, fontWeight: "700", lineHeight: 27, textAlign: "right" }, confidence: { fontSize: 12, textAlign: "right" }, evidenceHeading: { fontSize: 15, fontWeight: "800", textAlign: "right", marginTop: 5 }, evidence: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 }, evidenceMeta: { fontSize: 11, fontWeight: "800", textAlign: "right" }, evidenceText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, score: { fontSize: 10, textAlign: "right" },
+const styles = StyleSheet.create({ content: { paddingBottom: 40, gap: 16 }, header: { gap: 8 }, brandRow: { flexDirection: "row-reverse", alignItems: "center", gap: 12 }, logo: { width: 54, height: 54, borderRadius: 16 }, kicker: { fontSize: 12, fontWeight: "700", letterSpacing: 1, textAlign: "right" }, title: { fontSize: 30, fontWeight: "800", textAlign: "right" }, subtitle: { fontSize: 15, lineHeight: 24, textAlign: "right" }, hero: { borderRadius: 24, padding: 22, gap: 8 }, heroEyebrow: { color: "#CFEFEF", fontSize: 11, fontWeight: "800", letterSpacing: 1, textAlign: "right" }, heroTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "800", lineHeight: 32, textAlign: "right" }, heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, statsRow: { flexDirection: "row", gap: 10 }, stat: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, alignItems: "center", gap: 4 }, statValue: { fontSize: 22, fontWeight: "800" }, statLabel: { fontSize: 11 }, card: { borderRadius: 20, borderWidth: 1, padding: 17, gap: 12 }, sectionHeader: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { fontSize: 18, fontWeight: "800", textAlign: "right" }, sectionHint: { fontSize: 11, fontWeight: "700" }, cardText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, uploadButton: { borderWidth: 1.5, borderStyle: "dashed", borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageButton: { borderWidth: 1, borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageResult: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }, uploadIcon: { fontSize: 28, fontWeight: "300" }, uploadTitle: { fontSize: 15, fontWeight: "700", textAlign: "right" }, uploadMeta: { fontSize: 11, marginTop: 3, textAlign: "right" }, input: { minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 13, fontSize: 15, lineHeight: 23 }, askButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" }, askText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, answerCard: { borderRadius: 20, borderWidth: 1.5, padding: 17, gap: 11 }, badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }, badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" }, answerText: { fontSize: 17, fontWeight: "700", lineHeight: 27, textAlign: "right" }, confidence: { fontSize: 12, textAlign: "right" }, evidenceHeading: { fontSize: 15, fontWeight: "800", textAlign: "right", marginTop: 5 }, evidence: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 }, evidenceMeta: { fontSize: 11, fontWeight: "800", textAlign: "right" }, evidenceText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, score: { fontSize: 10, textAlign: "right" },
 });

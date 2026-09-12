@@ -17,6 +17,10 @@ const env = {
   deepLinkScheme: schemeFromBundleId,
 };
 
+// Native APKs cannot derive the sandbox API hostname from window.location.
+// Replace this temporary endpoint with the production API URL at deployment.
+const NATIVE_API_BASE_URL = "https://3000-i3uwf4ook88zlddp95kbw-1da3b4c3.sg2.manus.computer";
+
 export const OAUTH_PORTAL_URL = env.portal;
 export const OAUTH_SERVER_URL = env.server;
 export const APP_ID = env.appId;
@@ -44,6 +48,8 @@ export function getApiBaseUrl(): string {
       return `${protocol}//${apiHostname}`;
     }
   }
+
+  if (ReactNative.Platform.OS !== "web") return NATIVE_API_BASE_URL;
 
   // Fallback to empty (will use relative URL)
   return "";

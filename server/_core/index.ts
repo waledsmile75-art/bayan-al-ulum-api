@@ -10,6 +10,7 @@ import { createContext } from "./context";
 import fs from "node:fs";
 import path from "node:path";
 import { ask, ingestPdf, persistenceSnapshot, resumeTask } from "../core/engine";
+import { invokeLLM } from "./llm";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -98,6 +99,20 @@ async function startServer() {
   app.post("/api/core/tasks/:taskId/resume", async (req, res) => {
     try {
       res.json({ ok: true, result: await resumeTask(Number(req.params.taskId)) });
+    } catch (error) {
+      res.status(422).json({ ok: false, error: String(error) });
+    }
+  });
+
+  app.post("/api/core/analyze-image", async (req, res) => {
+    try {
+      const { imageBase64, mimeType = "image/jpeg", prompt = "حلّل هذه الصورة بالعربية بدقة، صف محتواها واستخرج أي نص أو أرقام مهمة، واذكر ما لا يمكنك الجزم به." } = req.body as { imageBase64?: string; mimeType?: string; prompt?: string };
+      if (!imageBase64) return res.status(400).json({ ok: false, error: "imageBase64 is required" });
+      if (imageBase64.length > 15_000_000) return res.status(413).json({ ok: false, error: "الصورة أكبر من الحد المسموح 11MB" });
+      const result = await invokeLLM({ model: "gemini-2.5-flash", maxTokens: 1200, messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "auto" } }] }] });
+      const content = result.choices[0]?.message.content;
+      const analysis = typeof content === "string" ? content : content?.map((part) => part.type === "text" ? part.text : "").join(" ").trim();
+      res.json({ ok: true, result: { analysis: analysis || "تعذر استخراج تحليل نصي من الصورة.", model: result.model } });
     } catch (error) {
       res.status(422).json({ ok: false, error: String(error) });
     }
