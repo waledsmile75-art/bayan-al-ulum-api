@@ -1,48 +1,91 @@
-import { ScrollView, Text, View, TouchableOpacity } from "react-native";
-
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { ScreenContainer } from "@/components/screen-container";
+import { askCore, getCoreSnapshot, ingestPdf, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
+import { useColors } from "@/hooks/use-colors";
 
-/**
- * Home Screen - NativeWind Example
- *
- * This template uses NativeWind (Tailwind CSS for React Native).
- * You can use familiar Tailwind classes directly in className props.
- *
- * Key patterns:
- * - Use `className` instead of `style` for most styling
- * - Theme colors: use tokens directly (bg-background, text-foreground, bg-primary, etc.); no dark: prefix needed
- * - Responsive: standard Tailwind breakpoints work on web
- * - Custom colors defined in tailwind.config.js
- */
+const statusLabel: Record<string, string> = {
+  Verified: "موثّق من المصدر",
+  "Partially Supported": "مدعوم جزئيًا",
+  Contradicted: "تعارض في الأدلة",
+  "Analytical Inference": "استنتاج تحليلي",
+  "Insufficient Evidence": "أدلة غير كافية",
+  Unverified: "غير متحقق",
+};
+
 export default function HomeScreen() {
+  const colors = useColors();
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<CoreAnswer | null>(null);
+  const [snapshot, setSnapshot] = useState<CoreSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const refresh = useCallback(async () => { try { setSnapshot(await getCoreSnapshot()); } catch { setSnapshot(null); } }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleUpload = async () => {
+    const picked = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
+    if (picked.canceled) return;
+    setUploading(true);
+    try {
+      const file = picked.assets[0];
+      const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
+      const result = await ingestPdf(file.name, base64);
+      Alert.alert("تمت الفهرسة", `الصفحات: ${result.pageCount}\nالأجزاء النصية: ${result.chunkCount}`);
+      await refresh();
+    } catch (error) { Alert.alert("تعذر معالجة الملف", String(error)); }
+    finally { setUploading(false); }
+  };
+
+  const handleAsk = async () => {
+    if (!question.trim()) return;
+    setBusy(true); setAnswer(null);
+    try { setAnswer(await askCore(question)); await refresh(); }
+    catch (error) { Alert.alert("تعذر تنفيذ السؤال", String(error)); }
+    finally { setBusy(false); }
+  };
+
   return (
-    <ScreenContainer className="p-6">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-        <View className="flex-1 gap-8">
-          {/* Hero Section */}
-          <View className="items-center gap-2">
-            <Text className="text-4xl font-bold text-foreground">Welcome</Text>
-            <Text className="text-base text-muted text-center">
-              Edit app/(tabs)/index.tsx to get started
-            </Text>
+    <ScreenContainer className="px-5 pt-5" containerClassName="bg-background">
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <View style={styles.brandRow}>
+            <Image source={require("@/assets/images/bayan-icon.png")} style={styles.logo} />
+            <View><Text style={[styles.kicker, { color: colors.primary }]}>مساعد البحث العلمي</Text><Text style={[styles.title, { color: colors.foreground }]}>بيان العلوم</Text></View>
           </View>
-
-          {/* Example Card */}
-          <View className="w-full max-w-sm self-center bg-surface rounded-2xl p-6 shadow-sm border border-border">
-            <Text className="text-lg font-semibold text-foreground mb-2">NativeWind Ready</Text>
-            <Text className="text-sm text-muted leading-relaxed">
-              Use Tailwind CSS classes directly in your React Native components.
-            </Text>
-          </View>
-
-          {/* Example Button */}
-          <View className="items-center">
-            <TouchableOpacity className="bg-primary px-6 py-3 rounded-full active:opacity-80">
-              <Text className="text-background font-semibold">Get Started</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={[styles.subtitle, { color: colors.muted }]}>اقرأ المصدر، اسأل بدقة، وتتبّع كل إجابة إلى موضعها الأصلي.</Text>
         </View>
+
+        <View style={[styles.hero, { backgroundColor: colors.primary }]}>
+          <Text style={styles.heroEyebrow}>DOCUMENT GROUNDED RESEARCH</Text>
+          <Text style={styles.heroTitle}>معرفة قابلة للتتبّع، بلا ادعاءات مخفية</Text>
+          <Text style={styles.heroText}>يعمل النظام على ملفاتك المفهرسة فقط، ويفصل بوضوح بين النص المصدر والاستنتاج التحليلي.</Text>
+        </View>
+
+        <View style={styles.statsRow}>
+          {[{ label: "مستندات", value: snapshot?.documents ?? "—" }, { label: "Chunks", value: snapshot?.chunks ?? "—" }, { label: "Embeddings", value: snapshot?.embeddings ?? "—" }].map((item) => <View key={item.label} style={[styles.stat, { backgroundColor: colors.surface, borderColor: colors.border }]}><Text style={[styles.statValue, { color: colors.foreground }]}>{item.value}</Text><Text style={[styles.statLabel, { color: colors.muted }]}>{item.label}</Text></View>)}
+        </View>
+
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.foreground }]}>مصادرك العلمية</Text><Text style={[styles.sectionHint, { color: colors.success }]}>SQLite + RAG</Text></View>
+          <Text style={[styles.cardText, { color: colors.muted }]}>ارفع ملف PDF نصيًا ليتم استخراج صفحاته وتقطيعها وفهرستها دلاليًا.</Text>
+          <Pressable onPress={handleUpload} disabled={uploading} style={({ pressed }) => [styles.uploadButton, { borderColor: colors.primary }, pressed && styles.pressed]}><Text style={[styles.uploadIcon, { color: colors.primary }]}>＋</Text><View><Text style={[styles.uploadTitle, { color: colors.foreground }]}>{uploading ? "جارٍ استخراج وفهرسة الملف…" : "إضافة ملف PDF"}</Text><Text style={[styles.uploadMeta, { color: colors.muted }]}>صفحات ← Chunks ← Embeddings</Text></View>{uploading && <ActivityIndicator color={colors.primary} />}</Pressable>
+        </View>
+
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.foreground }]}>اسأل مستنداتك</Text><Text style={[styles.sectionHint, { color: colors.muted }]}>Evidence-first</Text></View>
+          <TextInput value={question} onChangeText={setQuestion} onSubmitEditing={handleAsk} placeholder="مثال: كم عدد المشاركين؟" placeholderTextColor={colors.muted} multiline style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]} textAlign="right" />
+          <Pressable onPress={handleAsk} disabled={busy || !question.trim()} style={({ pressed }) => [styles.askButton, { backgroundColor: question.trim() ? colors.primary : colors.border }, pressed && styles.pressed]}><Text style={styles.askText}>{busy ? "جارٍ البحث والتحقق…" : "حلّل السؤال"}</Text></Pressable>
+        </View>
+
+        {answer && <View style={[styles.answerCard, { backgroundColor: colors.surface, borderColor: answer.status === "Verified" ? colors.success : colors.warning }]}><View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.foreground }]}>النتيجة</Text><View style={[styles.badge, { backgroundColor: answer.status === "Verified" ? colors.success : colors.warning }]}><Text style={styles.badgeText}>{statusLabel[answer.status] ?? answer.status}</Text></View></View><Text style={[styles.answerText, { color: colors.foreground }]}>{answer.answer}</Text><Text style={[styles.confidence, { color: colors.muted }]}>الثقة التفسيرية: {(answer.confidenceScore * 100).toFixed(0)}%</Text><Text style={[styles.evidenceHeading, { color: colors.foreground }]}>الأدلة المرتبطة</Text>{answer.evidence.length ? answer.evidence.map((item) => <View key={item.evidenceId} style={[styles.evidence, { borderColor: colors.border }]}><Text style={[styles.evidenceMeta, { color: colors.primary }]}>صفحة {item.pageNumber} · {item.sourceName}</Text><Text style={[styles.evidenceText, { color: colors.foreground }]}>{item.text}</Text><Text style={[styles.score, { color: colors.muted }]}>hybrid {item.finalScore.toFixed(2)} · semantic {item.semanticScore.toFixed(2)} · keyword {item.keywordScore.toFixed(2)}</Text></View>) : <Text style={[styles.cardText, { color: colors.muted }]}>لم يتم العثور على دليل مصدر كافٍ.</Text>}</View>}
       </ScrollView>
     </ScreenContainer>
   );
 }
+
+const styles = StyleSheet.create({ content: { paddingBottom: 40, gap: 16 }, header: { gap: 8 }, brandRow: { flexDirection: "row-reverse", alignItems: "center", gap: 12 }, logo: { width: 54, height: 54, borderRadius: 16 }, kicker: { fontSize: 12, fontWeight: "700", letterSpacing: 1, textAlign: "right" }, title: { fontSize: 30, fontWeight: "800", textAlign: "right" }, subtitle: { fontSize: 15, lineHeight: 24, textAlign: "right" }, hero: { borderRadius: 24, padding: 22, gap: 8 }, heroEyebrow: { color: "#CFEFEF", fontSize: 11, fontWeight: "800", letterSpacing: 1, textAlign: "right" }, heroTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "800", lineHeight: 32, textAlign: "right" }, heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, statsRow: { flexDirection: "row", gap: 10 }, stat: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, alignItems: "center", gap: 4 }, statValue: { fontSize: 22, fontWeight: "800" }, statLabel: { fontSize: 11 }, card: { borderRadius: 20, borderWidth: 1, padding: 17, gap: 12 }, sectionHeader: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { fontSize: 18, fontWeight: "800", textAlign: "right" }, sectionHint: { fontSize: 11, fontWeight: "700" }, cardText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, uploadButton: { borderWidth: 1.5, borderStyle: "dashed", borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, uploadIcon: { fontSize: 28, fontWeight: "300" }, uploadTitle: { fontSize: 15, fontWeight: "700", textAlign: "right" }, uploadMeta: { fontSize: 11, marginTop: 3, textAlign: "right" }, input: { minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 13, fontSize: 15, lineHeight: 23 }, askButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" }, askText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, answerCard: { borderRadius: 20, borderWidth: 1.5, padding: 17, gap: 11 }, badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }, badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" }, answerText: { fontSize: 17, fontWeight: "700", lineHeight: 27, textAlign: "right" }, confidence: { fontSize: 12, textAlign: "right" }, evidenceHeading: { fontSize: 15, fontWeight: "800", textAlign: "right", marginTop: 5 }, evidence: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 }, evidenceMeta: { fontSize: 11, fontWeight: "800", textAlign: "right" }, evidenceText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, score: { fontSize: 10, textAlign: "right" },
+});

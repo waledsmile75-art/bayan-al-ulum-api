@@ -7,6 +7,9 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import fs from "node:fs";
+import path from "node:path";
+import { ask, ingestPdf, persistenceSnapshot, resumeTask } from "../core/engine";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -60,6 +63,44 @@ async function startServer() {
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, timestamp: Date.now() });
+  });
+
+  app.get("/api/core/snapshot", async (_req, res) => {
+    res.json({ ok: true, snapshot: await persistenceSnapshot() });
+  });
+
+  app.post("/api/core/ingest", async (req, res) => {
+    try {
+      const { filename, dataBase64, projectId } = req.body as { filename?: string; dataBase64?: string; projectId?: number };
+      if (!filename || !dataBase64) return res.status(400).json({ ok: false, error: "filename and dataBase64 are required" });
+      const uploadDir = path.resolve(process.cwd(), "data", "uploads");
+      fs.mkdirSync(uploadDir, { recursive: true });
+      const safeName = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const filePath = path.join(uploadDir, safeName);
+      fs.writeFileSync(filePath, Buffer.from(dataBase64, "base64"));
+      const result = await ingestPdf(filePath, projectId);
+      res.json({ ok: true, result });
+    } catch (error) {
+      res.status(422).json({ ok: false, error: String(error) });
+    }
+  });
+
+  app.post("/api/core/ask", async (req, res) => {
+    try {
+      const { question, projectId } = req.body as { question?: string; projectId?: number };
+      if (!question?.trim()) return res.status(400).json({ ok: false, error: "question is required" });
+      res.json({ ok: true, result: await ask(question.trim(), projectId) });
+    } catch (error) {
+      res.status(422).json({ ok: false, error: String(error) });
+    }
+  });
+
+  app.post("/api/core/tasks/:taskId/resume", async (req, res) => {
+    try {
+      res.json({ ok: true, result: await resumeTask(Number(req.params.taskId)) });
+    } catch (error) {
+      res.status(422).json({ ok: false, error: String(error) });
+    }
   });
 
   app.use(
