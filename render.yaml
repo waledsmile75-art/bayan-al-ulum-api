@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: bayan-al-ulum-api
+    runtime: docker
+    # Persistent disk requires a paid Render instance; free instances sleep and lose local SQLite state.
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: BAYAN_SQLITE_PATH
+        value: /var/data/bayan.sqlite
+    disk:
+      name: bayan-data
+      mountPath: /var/data
+      sizeGB: 1
