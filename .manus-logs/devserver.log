@@ -535,3 +535,22 @@
 [2026-09-12T14:41:06.295Z] [1] λ  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
 [2026-09-12T14:41:06.420Z] [1] Web Bundled 63ms node_modules/expo-router/entry.js (1 module)
 [2026-09-12T14:41:07.064Z] [1]  LOG  [web] Logs will appear in the browser console
+[2026-09-12T21:12:45.758Z] [1] EXPO_USE_METRO_WORKSPACE_ROOT is enabled by default, use EXPO_NO_METRO_WORKSPACE_ROOT instead to disable.
+[2026-09-12T21:12:45.770Z] [1] EXPO_USE_METRO_WORKSPACE_ROOT is enabled by default, use EXPO_NO_METRO_WORKSPACE_ROOT instead to disable.
+[2026-09-12T21:12:45.773Z] [1] Web node_modules/expo-router/entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[2026-09-12T21:12:46.061Z] [1] Web Bundled 288ms node_modules/expo-router/entry.js (1 module)
+[2026-09-12T21:12:46.179Z] [1] λ Bundled 406ms node_modules/expo-router/node/render.js (1 module)
+[2026-09-12T21:12:46.870Z] [1] λ  LOG  { colorScheme: 'light', setColorScheme: [Function (anonymous)] } {
+[2026-09-12T21:12:46.870Z] [1]   '--color-primary': '#087F8C',
+[2026-09-12T21:12:46.870Z] [1]   '--color-background': '#F6FAFA',
+[2026-09-12T21:12:46.870Z] [1]   '--color-surface': '#FFFFFF',
+[2026-09-12T21:12:46.870Z] [1]   '--color-foreground': '#102A43',
+[2026-09-12T21:12:46.870Z] [1]   '--color-muted': '#627D98',
+[2026-09-12T21:12:46.870Z] [1]   '--color-border': '#D8E7E8',
+[2026-09-12T21:12:46.870Z] [1]   '--color-success': '#22C55E',
+[2026-09-12T21:12:46.870Z] [1]   '--color-warning': '#F59E0B',
+[2026-09-12T21:12:46.870Z] [1]   '--color-error': '#EF4444'
+[2026-09-12T21:12:46.870Z] [1] }
+[2026-09-12T21:12:47.058Z] [1] λ  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+[2026-09-12T21:12:47.184Z] [1] Web Bundled 64ms node_modules/expo-router/entry.js (1 module)
+[2026-09-12T21:12:47.760Z] [1]  LOG  [web] Logs will appear in the browser console
