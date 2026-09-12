@@ -5,6 +5,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { ScreenContainer } from "@/components/screen-container";
 import { analyzeImage, askCore, getCoreSnapshot, ingestPdf, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
+import { enqueueDocument, getCachedAnswer, getLocalCounts, initLocalStore, listLocalDocuments, markDocumentResult, saveCachedAnswer, type LocalDocument } from "@/lib/local-db";
+import { syncPendingDocuments } from "@/lib/sync-queue";
 import { useColors } from "@/hooks/use-colors";
 
 const statusLabel: Record<string, string> = {
@@ -25,9 +27,23 @@ export default function HomeScreen() {
   const [uploading, setUploading] = useState(false);
   const [analyzingImage, setAnalyzingImage] = useState(false);
   const [imageResult, setImageResult] = useState<string | null>(null);
+  const [localDocuments, setLocalDocuments] = useState<LocalDocument[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [offline, setOffline] = useState(false);
 
-  const refresh = useCallback(async () => { try { setSnapshot(await getCoreSnapshot()); } catch { setSnapshot(null); } }, []);
-  useEffect(() => { refresh(); }, [refresh]);
+  const refresh = useCallback(async () => {
+    const local = await getLocalCounts();
+    setPendingCount(local.pending);
+    setLocalDocuments(await listLocalDocuments());
+    try { setSnapshot(await getCoreSnapshot()); setOffline(false); }
+    catch { setSnapshot((current) => current ?? { projects: 0, documents: local.documents, pages: 0, chunks: 0, embeddings: 0, claims: 0, evidence: 0 }); setOffline(true); }
+  }, []);
+  useEffect(() => {
+    let mounted = true;
+    (async () => { await initLocalStore(); await syncPendingDocuments(); if (mounted) await refresh(); })();
+    const timer = setInterval(async () => { await syncPendingDocuments(); if (mounted) await refresh(); }, 30_000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, [refresh]);
 
   const handleUpload = async () => {
     const picked = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
@@ -35,9 +51,16 @@ export default function HomeScreen() {
     setUploading(true);
     try {
       const file = picked.assets[0];
+      const localItem = await enqueueDocument(file.name, file.uri);
       const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
-      const result = await ingestPdf(file.name, base64);
-      Alert.alert("تمت الفهرسة", `الصفحات: ${result.pageCount}\nالأجزاء النصية: ${result.chunkCount}`);
+      try {
+        const result = await ingestPdf(file.name, base64);
+        await markDocumentResult(localItem.id, true);
+        Alert.alert("تمت الفهرسة", `الصفحات: ${result.pageCount}\nالأجزاء النصية: ${result.chunkCount}`);
+      } catch {
+        setOffline(true);
+        Alert.alert("تم الحفظ محليًا", "لا يوجد اتصال بالخادم. أُضيف الملف إلى طابور المزامنة وسيُرسل تلقائيًا عند عودة الاتصال.");
+      }
       await refresh();
     } catch (error) { Alert.alert("تعذر معالجة الملف", String(error)); }
     finally { setUploading(false); }
@@ -46,8 +69,16 @@ export default function HomeScreen() {
   const handleAsk = async () => {
     if (!question.trim()) return;
     setBusy(true); setAnswer(null);
-    try { setAnswer(await askCore(question)); await refresh(); }
-    catch (error) { Alert.alert("تعذر تنفيذ السؤال", String(error)); }
+    try {
+      const cached = await getCachedAnswer<CoreAnswer>(question);
+      if (cached) { setAnswer(cached); setOffline(true); return; }
+      const result = await askCore(question);
+      await saveCachedAnswer(question, result);
+      setAnswer(result); setOffline(false); await refresh();
+    } catch {
+      setOffline(true);
+      Alert.alert("وضع عدم الاتصال", "لا توجد إجابة مخزنة لهذا السؤال بعد. ارفع المستند الآن؛ سيُفهرس تلقائيًا عند عودة الاتصال.");
+    }
     finally { setBusy(false); }
   };
 
@@ -76,6 +107,7 @@ export default function HomeScreen() {
           <Text style={styles.heroTitle}>معرفة قابلة للتتبّع، بلا ادعاءات مخفية</Text>
           <Text style={styles.heroText}>يعمل النظام على ملفاتك المفهرسة فقط، ويفصل بوضوح بين النص المصدر والاستنتاج التحليلي.</Text>
         </View>
+        <View style={[styles.connection, { backgroundColor: offline ? colors.warning : colors.success }]}><Text style={styles.connectionText}>{offline ? `وضع عدم الاتصال · ${pendingCount} ملف بانتظار المزامنة` : "متصل · المزامنة التلقائية مفعّلة"}</Text></View>
 
         <View style={styles.statsRow}>
           {[{ label: "مستندات", value: snapshot?.documents ?? "—" }, { label: "Chunks", value: snapshot?.chunks ?? "—" }, { label: "Embeddings", value: snapshot?.embeddings ?? "—" }].map((item) => <View key={item.label} style={[styles.stat, { backgroundColor: colors.surface, borderColor: colors.border }]}><Text style={[styles.statValue, { color: colors.foreground }]}>{item.value}</Text><Text style={[styles.statLabel, { color: colors.muted }]}>{item.label}</Text></View>)}
@@ -87,6 +119,7 @@ export default function HomeScreen() {
           <Pressable onPress={handleUpload} disabled={uploading} style={({ pressed }) => [styles.uploadButton, { borderColor: colors.primary }, pressed && styles.pressed]}><Text style={[styles.uploadIcon, { color: colors.primary }]}>＋</Text><View><Text style={[styles.uploadTitle, { color: colors.foreground }]}>{uploading ? "جارٍ استخراج وفهرسة الملف…" : "إضافة ملف PDF"}</Text><Text style={[styles.uploadMeta, { color: colors.muted }]}>صفحات ← Chunks ← Embeddings</Text></View>{uploading && <ActivityIndicator color={colors.primary} />}</Pressable>
           <Pressable onPress={handleImageAnalysis} disabled={analyzingImage} style={({ pressed }) => [styles.imageButton, { backgroundColor: colors.background, borderColor: colors.border }, pressed && styles.pressed]}><Text style={[styles.uploadIcon, { color: colors.primary }]}>▧</Text><View><Text style={[styles.uploadTitle, { color: colors.foreground }]}>{analyzingImage ? "جارٍ تحليل الصورة…" : "رفع صورة وتحليلها"}</Text><Text style={[styles.uploadMeta, { color: colors.muted }]}>استخراج النصوص والأرقام ووصف المحتوى</Text></View>{analyzingImage && <ActivityIndicator color={colors.primary} />}</Pressable>
           {imageResult && <View style={[styles.imageResult, { backgroundColor: colors.background, borderColor: colors.primary }]}><Text style={[styles.evidenceHeading, { color: colors.foreground }]}>نتيجة تحليل الصورة</Text><Text style={[styles.answerText, { color: colors.foreground }]}>{imageResult}</Text></View>}
+          {localDocuments.length > 0 && <View style={[styles.localList, { borderColor: colors.border, backgroundColor: colors.background }]}><Text style={[styles.evidenceHeading, { color: colors.foreground }]}>المستندات المحلية</Text>{localDocuments.slice(0, 5).map((doc) => <Text key={doc.id} style={[styles.localItem, { color: colors.muted }]}>{doc.status === "synced" ? "✓" : "◌"} {doc.filename} · {doc.status === "synced" ? "تمت المزامنة" : "بانتظار الاتصال"}</Text>)}</View>}
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -101,5 +134,5 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({ content: { paddingBottom: 40, gap: 16 }, header: { gap: 8 }, brandRow: { flexDirection: "row-reverse", alignItems: "center", gap: 12 }, logo: { width: 54, height: 54, borderRadius: 16 }, kicker: { fontSize: 12, fontWeight: "700", letterSpacing: 1, textAlign: "right" }, title: { fontSize: 30, fontWeight: "800", textAlign: "right" }, subtitle: { fontSize: 15, lineHeight: 24, textAlign: "right" }, hero: { borderRadius: 24, padding: 22, gap: 8 }, heroEyebrow: { color: "#CFEFEF", fontSize: 11, fontWeight: "800", letterSpacing: 1, textAlign: "right" }, heroTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "800", lineHeight: 32, textAlign: "right" }, heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, statsRow: { flexDirection: "row", gap: 10 }, stat: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, alignItems: "center", gap: 4 }, statValue: { fontSize: 22, fontWeight: "800" }, statLabel: { fontSize: 11 }, card: { borderRadius: 20, borderWidth: 1, padding: 17, gap: 12 }, sectionHeader: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { fontSize: 18, fontWeight: "800", textAlign: "right" }, sectionHint: { fontSize: 11, fontWeight: "700" }, cardText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, uploadButton: { borderWidth: 1.5, borderStyle: "dashed", borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageButton: { borderWidth: 1, borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageResult: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }, uploadIcon: { fontSize: 28, fontWeight: "300" }, uploadTitle: { fontSize: 15, fontWeight: "700", textAlign: "right" }, uploadMeta: { fontSize: 11, marginTop: 3, textAlign: "right" }, input: { minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 13, fontSize: 15, lineHeight: 23 }, askButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" }, askText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, answerCard: { borderRadius: 20, borderWidth: 1.5, padding: 17, gap: 11 }, badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }, badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" }, answerText: { fontSize: 17, fontWeight: "700", lineHeight: 27, textAlign: "right" }, confidence: { fontSize: 12, textAlign: "right" }, evidenceHeading: { fontSize: 15, fontWeight: "800", textAlign: "right", marginTop: 5 }, evidence: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 }, evidenceMeta: { fontSize: 11, fontWeight: "800", textAlign: "right" }, evidenceText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, score: { fontSize: 10, textAlign: "right" },
+const styles = StyleSheet.create({ content: { paddingBottom: 40, gap: 16 }, header: { gap: 8 }, brandRow: { flexDirection: "row-reverse", alignItems: "center", gap: 12 }, logo: { width: 54, height: 54, borderRadius: 16 }, kicker: { fontSize: 12, fontWeight: "700", letterSpacing: 1, textAlign: "right" }, title: { fontSize: 30, fontWeight: "800", textAlign: "right" }, subtitle: { fontSize: 15, lineHeight: 24, textAlign: "right" }, hero: { borderRadius: 24, padding: 22, gap: 8 }, heroEyebrow: { color: "#CFEFEF", fontSize: 11, fontWeight: "800", letterSpacing: 1, textAlign: "right" }, heroTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "800", lineHeight: 32, textAlign: "right" }, heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, connection: { borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 }, connectionText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800", textAlign: "right" }, statsRow: { flexDirection: "row", gap: 10 }, stat: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, alignItems: "center", gap: 4 }, statValue: { fontSize: 22, fontWeight: "800" }, statLabel: { fontSize: 11 }, card: { borderRadius: 20, borderWidth: 1, padding: 17, gap: 12 }, sectionHeader: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { fontSize: 18, fontWeight: "800", textAlign: "right" }, sectionHint: { fontSize: 11, fontWeight: "700" }, cardText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, uploadButton: { borderWidth: 1.5, borderStyle: "dashed", borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageButton: { borderWidth: 1, borderRadius: 16, padding: 15, flexDirection: "row-reverse", alignItems: "center", gap: 12 }, imageResult: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }, localList: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 6 }, localItem: { fontSize: 12, textAlign: "right" }, uploadIcon: { fontSize: 28, fontWeight: "300" }, uploadTitle: { fontSize: 15, fontWeight: "700", textAlign: "right" }, uploadMeta: { fontSize: 11, marginTop: 3, textAlign: "right" }, input: { minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 13, fontSize: 15, lineHeight: 23 }, askButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" }, askText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, answerCard: { borderRadius: 20, borderWidth: 1.5, padding: 17, gap: 11 }, badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }, badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" }, answerText: { fontSize: 17, fontWeight: "700", lineHeight: 27, textAlign: "right" }, confidence: { fontSize: 12, textAlign: "right" }, evidenceHeading: { fontSize: 15, fontWeight: "800", textAlign: "right", marginTop: 5 }, evidence: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 }, evidenceMeta: { fontSize: 11, fontWeight: "800", textAlign: "right" }, evidenceText: { fontSize: 13, lineHeight: 21, textAlign: "right" }, score: { fontSize: 10, textAlign: "right" },
 });

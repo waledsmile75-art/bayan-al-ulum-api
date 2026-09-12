@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+const file = '/home/ubuntu/bayan-al-ulum/app/(tabs)/index.tsx';
+let text = fs.readFileSync(file, 'utf8');
+const hero = 'heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, statsRow:';
+const heroReplacement = 'heroText: { color: "#D9F4F4", fontSize: 14, lineHeight: 22, textAlign: "right" }, connection: { borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 }, connectionText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800", textAlign: "right" }, statsRow:';
+const image = 'imageResult: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }, uploadIcon:';
+const imageReplacement = 'imageResult: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }, localList: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 6 }, localItem: { fontSize: 12, textAlign: "right" }, uploadIcon:';
+if (!text.includes(hero) || !text.includes(image)) throw new Error('style anchors not found');
+text = text.replace(hero, heroReplacement).replace(image, imageReplacement);
+fs.writeFileSync(file, text);
+console.log('offline-styles-patched');
