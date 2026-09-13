@@ -88,31 +88,36 @@ async function startServer() {
 
   app.post("/api/core/ask", async (req, res) => {
     try {
-      const { question, projectId } = req.body as { question?: string; projectId?: number };
+      const { question, projectId, documentId } = req.body as { question?: string; projectId?: number; documentId?: number };
       if (!question?.trim()) return res.status(400).json({ ok: false, error: "question is required" });
-      res.json({ ok: true, result: await ask(question.trim(), projectId) });
+      res.json({ ok: true, result: await ask(question.trim(), projectId, documentId) });
     } catch (error) {
       res.status(422).json({ ok: false, error: String(error) });
     }
   });
 
-  async function groundedWriting(mode: "summary" | "explain", question?: string) {
-    const evidence = await retrieve(question?.trim() || "المحتوى والأفكار الرئيسية في المستند", undefined, 10);
+  async function groundedWriting(mode: "summary" | "explain" | "translate", question?: string, documentId?: number, targetLanguage = "العربية") {
+    const evidence = await retrieve(question?.trim() || "المحتوى والأفكار الرئيسية في المستند", undefined, 10, documentId);
     if (!evidence.length) throw new Error("لا توجد مستندات مفهرسة. ارفع ملفًا وانتظر اكتمال الفهرسة أولًا.");
     const context = evidence.map((item, index) => `[${index + 1}] صفحة ${item.pageNumber}: ${item.text}`).join("\n\n");
-    const instruction = mode === "summary" ? "اكتب ملخصًا عربيًا منظمًا للمحتوى اعتمادًا على الأدلة فقط، مع عناوين ونقاط رئيسية، ولا تضف معلومات غير موجودة." : `اشرح المحتوى بالعربية شرحًا مبسطًا ودقيقًا${question ? ` مع التركيز على: ${question}` : ""}، واربط كل فكرة بالدليل المناسب ولا تخترع معلومات.`;
+    const instruction = mode === "summary" ? "اكتب ملخصًا عربيًا منظمًا للمحتوى اعتمادًا على الأدلة فقط، مع عناوين ونقاط رئيسية، ولا تضف معلومات غير موجودة." : mode === "translate" ? `ترجم النص المستخرج إلى ${targetLanguage} ترجمة أمينة، وحافظ على المصطلحات العلمية والأرقام، ولا تضف شرحًا من عندك.` : `اشرح المحتوى بالعربية شرحًا مبسطًا ودقيقًا${question ? ` مع التركيز على: ${question}` : ""}، واربط كل فكرة بالدليل المناسب ولا تخترع معلومات.`;
     const result = await invokeLLM({ model: "gemini-2.5-flash", maxTokens: 1800, messages: [{ role: "user", content: `${instruction}\n\nالمصادر:\n${context}` }] });
     const content = result.choices[0]?.message.content;
     return typeof content === "string" ? content : content?.map((part) => part.type === "text" ? part.text : "").join(" ").trim() || "تعذر إنشاء النتيجة.";
   }
 
   app.post("/api/core/summarize", async (req, res) => {
-    try { res.json({ ok: true, result: { text: await groundedWriting("summary", req.body?.question) } }); }
+    try { res.json({ ok: true, result: { text: await groundedWriting("summary", req.body?.question, req.body?.documentId) } }); }
     catch (error) { res.status(422).json({ ok: false, error: String(error) }); }
   });
 
   app.post("/api/core/explain", async (req, res) => {
-    try { res.json({ ok: true, result: { text: await groundedWriting("explain", req.body?.question) } }); }
+    try { res.json({ ok: true, result: { text: await groundedWriting("explain", req.body?.question, req.body?.documentId) } }); }
+    catch (error) { res.status(422).json({ ok: false, error: String(error) }); }
+  });
+
+  app.post("/api/core/translate", async (req, res) => {
+    try { res.json({ ok: true, result: { text: await groundedWriting("translate", undefined, req.body?.documentId, req.body?.targetLanguage || "العربية") } }); }
     catch (error) { res.status(422).json({ ok: false, error: String(error) }); }
   });
 

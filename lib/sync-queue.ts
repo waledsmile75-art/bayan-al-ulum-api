@@ -16,8 +16,8 @@ export async function syncPendingDocuments(): Promise<{ synced: number; pending:
       try {
         await markDocumentSyncing(item.id);
         const dataBase64 = await FileSystem.readAsStringAsync(item.uri, { encoding: FileSystem.EncodingType.Base64 });
-        await ingestPdf(item.filename, dataBase64);
-        await markDocumentResult(item.id, true);
+        const result = await ingestPdf(item.filename, dataBase64);
+        await markDocumentResult(item.id, true, undefined, result.documentId);
         synced += 1;
       } catch (error) {
         await markDocumentResult(item.id, false, String(error));

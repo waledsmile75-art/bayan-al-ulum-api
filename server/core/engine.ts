@@ -68,11 +68,11 @@ export async function ingestPdf(filePath: string, projectId?: number): Promise<{
   }
 }
 
-export async function retrieve(question: string, projectId?: number, limit = 8): Promise<RetrievalResult[]> {
+export async function retrieve(question: string, projectId?: number, limit = 8, documentId?: number): Promise<RetrievalResult[]> {
   await initSqlite();
   projectId ??= makeProject();
   const qVector = await embeddingProvider.embed(question);
-  const rows = sqlite.prepare(`SELECT c.*, s.title AS section_title, e.vector_json FROM chunks c LEFT JOIN sections s ON s.id=c.section_id LEFT JOIN embeddings e ON e.chunk_id=c.id JOIN documents d ON d.id=c.document_id WHERE d.project_id=?`).all(projectId) as any[];
+  const rows = sqlite.prepare(`SELECT c.*, s.title AS section_title, e.vector_json FROM chunks c LEFT JOIN sections s ON s.id=c.section_id LEFT JOIN embeddings e ON e.chunk_id=c.id JOIN documents d ON d.id=c.document_id WHERE d.project_id=? AND (? IS NULL OR d.id=?)`).all(projectId, documentId ?? null, documentId ?? null) as any[];
   return rows.map((row) => {
     const semanticScore = row.vector_json ? cosineSimilarity(qVector, JSON.parse(row.vector_json)) : 0;
     const k = keywordScore(question, row.text);
@@ -80,10 +80,10 @@ export async function retrieve(question: string, projectId?: number, limit = 8):
   }).sort((a, b) => b.finalScore - a.finalScore).slice(0, limit);
 }
 
-export async function ask(question: string, projectId?: number): Promise<VerificationResult> {
+export async function ask(question: string, projectId?: number, documentId?: number): Promise<VerificationResult> {
   await initSqlite();
   projectId ??= makeProject();
-  const results = await retrieve(question, projectId);
+  const results = await retrieve(question, projectId, 8, documentId);
   const evidence: Evidence[] = results.filter((r) => r.finalScore >= 0.18 && (r.keywordScore > 0 || r.semanticScore >= 0.72) && !/ignore all previous|reveal the system prompt|pretend this document/i.test(r.text)).map((r) => {
     const source = sqlite.prepare("SELECT filename FROM documents WHERE id=?").get(r.documentId) as { filename?: string } | undefined;
     return { ...r, evidenceId: 0, sourceType: "file", sourceName: String(source?.filename ?? "document"), relevanceScore: r.finalScore, directnessScore: Math.min(1, r.keywordScore * 0.55 + r.semanticScore * 0.45), sourceQuality: "user_provided_document", extractionQuality: 1, confidenceScore: r.finalScore, confidenceReasons: [`keyword=${r.keywordScore.toFixed(2)}`, `semantic=${r.semanticScore.toFixed(2)}`, `hybrid=${r.finalScore.toFixed(2)}`] };

@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 import type * as SQLiteTypes from "expo-sqlite";
 
-export type LocalDocument = { id: number; filename: string; uri: string; status: "pending" | "syncing" | "synced" | "failed"; attempts: number; lastError: string | null; createdAt: string };
+export type LocalDocument = { id: number; filename: string; uri: string; remoteDocumentId?: number; status: "pending" | "syncing" | "synced" | "failed"; attempts: number; lastError: string | null; createdAt: string };
 export type QueueItem = LocalDocument;
 
 let dbPromise: Promise<SQLiteTypes.SQLiteDatabase | null> | null = null;
@@ -20,13 +20,15 @@ async function db() {
           status TEXT NOT NULL DEFAULT 'pending',
           attempts INTEGER NOT NULL DEFAULT 0,
           last_error TEXT,
-          created_at TEXT NOT NULL
+          created_at TEXT NOT NULL,
+          remote_document_id INTEGER
         );
         CREATE TABLE IF NOT EXISTS cached_answers (
           question TEXT PRIMARY KEY,
           payload TEXT NOT NULL,
           created_at TEXT NOT NULL
         );`);
+      await database.execAsync("ALTER TABLE local_documents ADD COLUMN remote_document_id INTEGER").catch(() => undefined);
       return database;
     });
   }
@@ -49,13 +51,13 @@ export async function enqueueDocument(filename: string, uri: string): Promise<Lo
 export async function listPendingDocuments(): Promise<QueueItem[]> {
   const database = await db();
   if (!database) return memoryDocs.filter((item) => item.status !== "synced");
-  return database.getAllAsync<LocalDocument>("SELECT id, filename, uri, status, attempts, last_error as lastError, created_at as createdAt FROM local_documents WHERE status IN ('pending', 'failed') ORDER BY id ASC");
+  return database.getAllAsync<LocalDocument>("SELECT id, filename, uri, remote_document_id as remoteDocumentId, status, attempts, last_error as lastError, created_at as createdAt FROM local_documents WHERE status IN ('pending', 'failed') ORDER BY id ASC");
 }
 
 export async function listLocalDocuments(): Promise<LocalDocument[]> {
   const database = await db();
   if (!database) return [...memoryDocs].reverse();
-  return database.getAllAsync<LocalDocument>("SELECT id, filename, uri, status, attempts, last_error as lastError, created_at as createdAt FROM local_documents ORDER BY id DESC");
+  return database.getAllAsync<LocalDocument>("SELECT id, filename, uri, remote_document_id as remoteDocumentId, status, attempts, last_error as lastError, created_at as createdAt FROM local_documents ORDER BY id DESC");
 }
 
 export async function markDocumentSyncing(id: number) {
@@ -64,10 +66,10 @@ export async function markDocumentSyncing(id: number) {
   await database.runAsync("UPDATE local_documents SET status='syncing', attempts=attempts+1 WHERE id=?", id);
 }
 
-export async function markDocumentResult(id: number, ok: boolean, error?: string) {
+export async function markDocumentResult(id: number, ok: boolean, error?: string, remoteDocumentId?: number) {
   const database = await db();
   if (!database) { const item = memoryDocs.find((doc) => doc.id === id); if (item) { item.status = ok ? "synced" : "failed"; item.lastError = error ?? null; item.attempts += 1; } return; }
-  await database.runAsync("UPDATE local_documents SET status=?, last_error=? WHERE id=?", ok ? "synced" : "failed", error ?? null, id);
+  await database.runAsync("UPDATE local_documents SET status=?, last_error=?, remote_document_id=COALESCE(?, remote_document_id) WHERE id=?", ok ? "synced" : "failed", error ?? null, remoteDocumentId ?? null, id);
 }
 
 export async function saveCachedAnswer(question: string, payload: unknown) {
