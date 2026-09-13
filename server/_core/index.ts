@@ -9,7 +9,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import fs from "node:fs";
 import path from "node:path";
-import { ask, ingestPdf, persistenceSnapshot, resumeTask } from "../core/engine";
+import { ask, ingestPdf, persistenceSnapshot, resumeTask, retrieve } from "../core/engine";
 import { invokeLLM } from "./llm";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -94,6 +94,26 @@ async function startServer() {
     } catch (error) {
       res.status(422).json({ ok: false, error: String(error) });
     }
+  });
+
+  async function groundedWriting(mode: "summary" | "explain", question?: string) {
+    const evidence = await retrieve(question?.trim() || "المحتوى والأفكار الرئيسية في المستند", undefined, 10);
+    if (!evidence.length) throw new Error("لا توجد مستندات مفهرسة. ارفع ملفًا وانتظر اكتمال الفهرسة أولًا.");
+    const context = evidence.map((item, index) => `[${index + 1}] صفحة ${item.pageNumber}: ${item.text}`).join("\n\n");
+    const instruction = mode === "summary" ? "اكتب ملخصًا عربيًا منظمًا للمحتوى اعتمادًا على الأدلة فقط، مع عناوين ونقاط رئيسية، ولا تضف معلومات غير موجودة." : `اشرح المحتوى بالعربية شرحًا مبسطًا ودقيقًا${question ? ` مع التركيز على: ${question}` : ""}، واربط كل فكرة بالدليل المناسب ولا تخترع معلومات.`;
+    const result = await invokeLLM({ model: "gemini-2.5-flash", maxTokens: 1800, messages: [{ role: "user", content: `${instruction}\n\nالمصادر:\n${context}` }] });
+    const content = result.choices[0]?.message.content;
+    return typeof content === "string" ? content : content?.map((part) => part.type === "text" ? part.text : "").join(" ").trim() || "تعذر إنشاء النتيجة.";
+  }
+
+  app.post("/api/core/summarize", async (req, res) => {
+    try { res.json({ ok: true, result: { text: await groundedWriting("summary", req.body?.question) } }); }
+    catch (error) { res.status(422).json({ ok: false, error: String(error) }); }
+  });
+
+  app.post("/api/core/explain", async (req, res) => {
+    try { res.json({ ok: true, result: { text: await groundedWriting("explain", req.body?.question) } }); }
+    catch (error) { res.status(422).json({ ok: false, error: String(error) }); }
   });
 
   app.post("/api/core/tasks/:taskId/resume", async (req, res) => {

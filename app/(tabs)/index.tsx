@@ -4,7 +4,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { ScreenContainer } from "@/components/screen-container";
-import { analyzeImage, askCore, getCoreSnapshot, ingestPdf, getConfiguredApiBaseUrl, setConfiguredApiBaseUrl, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
+import { analyzeImage, askCore, getCoreSnapshot, ingestPdf, getConfiguredApiBaseUrl, setConfiguredApiBaseUrl, summarizeDocument, explainDocument, type CoreAnswer, type CoreSnapshot } from "@/lib/core-api";
 import { enqueueDocument, getCachedAnswer, getLocalCounts, initLocalStore, listLocalDocuments, markDocumentResult, saveCachedAnswer, type LocalDocument } from "@/lib/local-db";
 import { syncPendingDocuments } from "@/lib/sync-queue";
 import { useColors } from "@/hooks/use-colors";
@@ -33,6 +33,9 @@ export default function HomeScreen() {
   const [syncing, setSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [apiUrl, setApiUrl] = useState("");
+  const [writing, setWriting] = useState<"summary" | "explain" | null>(null);
+  const [writingMode, setWritingMode] = useState<"summary" | "explain">("summary");
+  const [writingResult, setWritingResult] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const local = await getLocalCounts();
@@ -76,6 +79,7 @@ export default function HomeScreen() {
   const handleManualSync = async () => { setSyncing(true); await syncPendingDocuments(); await refresh(); setSyncing(false); };
   const openSettings = async () => { setApiUrl(await getConfiguredApiBaseUrl()); setSettingsOpen((value) => !value); };
   const saveSettings = async () => { await setConfiguredApiBaseUrl(apiUrl); setSettingsOpen(false); await refresh(); };
+  const handleWriting = async (mode: "summary" | "explain") => { setWriting(mode); setWritingMode(mode); setWritingResult(null); try { setWritingResult(mode === "summary" ? await summarizeDocument(question) : await explainDocument(question)); } catch (error) { Alert.alert("تعذر تنفيذ العملية", String(error)); } finally { setWriting(null); } };
 
   const handleAsk = async () => {
     if (!question.trim()) return;
@@ -139,6 +143,8 @@ export default function HomeScreen() {
           <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.foreground }]}>اسأل مستنداتك</Text><Text style={[styles.sectionHint, { color: colors.muted }]}>Evidence-first</Text></View>
           <TextInput value={question} onChangeText={setQuestion} onSubmitEditing={handleAsk} placeholder="مثال: كم عدد المشاركين؟" placeholderTextColor={colors.muted} multiline style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]} textAlign="right" />
           <Pressable onPress={handleAsk} disabled={busy || !question.trim()} style={({ pressed }) => [styles.askButton, { backgroundColor: question.trim() ? colors.primary : colors.border }, pressed && styles.pressed]}><Text style={styles.askText}>{busy ? "جارٍ البحث والتحقق…" : "حلّل السؤال"}</Text></Pressable>
+          <View style={styles.actionRow}><Pressable onPress={() => handleWriting("summary")} disabled={!!writing} style={[styles.smallButton, { backgroundColor: colors.primary }]}><Text style={styles.smallButtonText}>{writing === "summary" ? "جارٍ التلخيص…" : "لخّص المستند"}</Text></Pressable><Pressable onPress={() => handleWriting("explain")} disabled={!!writing} style={[styles.smallButton, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 }]}><Text style={[styles.smallButtonText, { color: colors.foreground }]}>{writing === "explain" ? "جارٍ الشرح…" : "اشرح المستند"}</Text></Pressable></View>
+          {writingResult && <View style={[styles.imageResult, { backgroundColor: colors.background, borderColor: colors.primary }]}><Text style={[styles.evidenceHeading, { color: colors.foreground }]}>{writingMode === "summary" ? "الملخص" : "الشرح"}</Text><Text style={[styles.answerText, { color: colors.foreground }]}>{writingResult}</Text></View>}
         </View>
 
         {answer && <View style={[styles.answerCard, { backgroundColor: colors.surface, borderColor: answer.status === "Verified" ? colors.success : colors.warning }]}><View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.foreground }]}>النتيجة</Text><View style={[styles.badge, { backgroundColor: answer.status === "Verified" ? colors.success : colors.warning }]}><Text style={styles.badgeText}>{statusLabel[answer.status] ?? answer.status}</Text></View></View><Text style={[styles.answerText, { color: colors.foreground }]}>{answer.answer}</Text><Text style={[styles.confidence, { color: colors.muted }]}>الثقة التفسيرية: {(answer.confidenceScore * 100).toFixed(0)}%</Text><Text style={[styles.evidenceHeading, { color: colors.foreground }]}>الأدلة المرتبطة</Text>{answer.evidence.length ? answer.evidence.map((item) => <View key={item.evidenceId} style={[styles.evidence, { borderColor: colors.border }]}><Text style={[styles.evidenceMeta, { color: colors.primary }]}>صفحة {item.pageNumber} · {item.sourceName}</Text><Text style={[styles.evidenceText, { color: colors.foreground }]}>{item.text}</Text><Text style={[styles.score, { color: colors.muted }]}>hybrid {item.finalScore.toFixed(2)} · semantic {item.semanticScore.toFixed(2)} · keyword {item.keywordScore.toFixed(2)}</Text></View>) : <Text style={[styles.cardText, { color: colors.muted }]}>لم يتم العثور على دليل مصدر كافٍ.</Text>}</View>}
